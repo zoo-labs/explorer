@@ -6,12 +6,12 @@ services:
     pull_policy: always
     platform: linux/amd64
     restart: always
-    container_name: 'user-ops-indexer-luxnet'
+    container_name: 'user-ops-indexer-zoonet'
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     env_file:
       -  ../envs/common-user-ops-indexer.env
     environment:
       - USER_OPS_INDEXER__INDEXER__RPC_URL="ws://host.docker.internal:8080"
-      - USER_OPS_INDEXER__DATABASE__CONNECT__URL=postgresql://lux:oi1dAc9bad8MSc2da51a2544f0cb8e16lb21A@host.docker.internal:5432/explorer_luxnet
+      - USER_OPS_INDEXER__DATABASE__CONNECT__URL=postgresql://lux:oi1dAc9bad8MSc2da51a2544f0cb8e16lb21A@host.docker.internal:5432/explorer_zoonet
       - USER_OPS_INDEXER__DATABASE__RUN_MIGRATIONS=false

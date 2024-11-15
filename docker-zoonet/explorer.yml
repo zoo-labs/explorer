@@ -3,6 +3,8 @@ version: '3.9'
 services:
   blockscout:
     network_mode: "host"
+    ports:
+      - 4200:4000
     extends:
       file: ./services/blockscout.yml
       service: blockscout
@@ -10,7 +12,6 @@ services:
       context: ..
       dockerfile: ./docker/Dockerfile
       args:
-        BLOCKSCOUT_USER: blockscout-testnet
         CACHE_EXCHANGE_RATES_PERIOD: ""
         API_V1_READ_METHODS_DISABLED: "false"
         DISABLE_WEBAPP: "false"
@@ -19,12 +20,8 @@ services:
         CACHE_ADDRESS_WITH_BALANCES_UPDATE_INTERVAL: ""
         ADMIN_PANEL_ENABLED: "true"
         RELEASE_VERSION: 6.9.0
-
     environment:
-      RELEASE_NODE: "blockscout-testnet@luxtest"
-      BLOCKSCOUT_USER: blockscout-testnet
-      ETHEREUM_JSONRPC_HTTP_URL: http://luxtest:8080/
-      ETHEREUM_JSONRPC_TRACE_URL: http://luxtest:8080/
-      ETHEREUM_JSONRPC_WS_URL: http://luxtest:8080/
-      CHAIN_ID: '96368'
-      PORT: 4001
+        ETHEREUM_JSONRPC_HTTP_URL: http://zoonet:8080/
+        ETHEREUM_JSONRPC_TRACE_URL: http://zoonet:8080/
+        ETHEREUM_JSONRPC_WS_URL: http://zoonet:8080/
+        CHAIN_ID: '96369'

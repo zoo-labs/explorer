@@ -1,4 +1,4 @@
-# Docker-compose configuration (Lux Mainnet)
+# Docker-compose configuration (Zoo Testnet)
 
 Runs Blockscout locally in Docker containers with [docker-compose](https://github.com/docker/compose).
 
