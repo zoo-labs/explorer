@@ -33,6 +33,7 @@ queue_target = ConfigHelper.parse_integer_env_var("DATABASE_QUEUE_TARGET", 50)
 # Configures the database
 config :explorer, Explorer.Repo,
   url: System.get_env("DATABASE_URL"),
+  listener_url: System.get_env("DATABASE_EVENT_URL"),
   pool_size: pool_size,
   ssl: ExplorerConfigHelper.ssl_enabled?(),
   queue_target: queue_target
@@ -51,35 +52,49 @@ config :explorer, Explorer.Repo.Account,
   ssl: ExplorerConfigHelper.ssl_enabled?(),
   queue_target: queue_target
 
-# Configures PolygonEdge database
-config :explorer, Explorer.Repo.PolygonEdge,
-  url: System.get_env("DATABASE_URL"),
-  # actually this repo is not started, and its pool size remains unused.
-  # separating repos for different CHAIN_TYPE is implemented only for the sake of keeping DB schema update relevant to the current chain type
-  pool_size: 1,
-  ssl: ExplorerConfigHelper.ssl_enabled?()
-
-# Configures PolygonZkevm database
-config :explorer, Explorer.Repo.PolygonZkevm,
-  url: System.get_env("DATABASE_URL"),
-  # actually this repo is not started, and its pool size remains unused.
-  # separating repos for different CHAIN_TYPE is implemented only for the sake of keeping DB schema update relevant to the current chain type
-  pool_size: 1,
-  ssl: ExplorerConfigHelper.ssl_enabled?()
-
-# Configures Rootstock database
-config :explorer, Explorer.Repo.RSK,
-  url: System.get_env("DATABASE_URL"),
-  # actually this repo is not started, and its pool size remains unused.
-  # separating repos for different CHAIN_TYPE is implemented only for the sake of keeping DB schema update relevant to the current chain type
-  pool_size: 1,
-  ssl: ExplorerConfigHelper.ssl_enabled?()
+# Configures Mud database
+config :explorer, Explorer.Repo.Mud,
+  url: ExplorerConfigHelper.get_mud_db_url(),
+  pool_size: ConfigHelper.parse_integer_env_var("MUD_POOL_SIZE", 50),
+  ssl: ExplorerConfigHelper.ssl_enabled?(),
+  queue_target: queue_target
 
 # Configures Suave database
 config :explorer, Explorer.Repo.Suave,
   url: ExplorerConfigHelper.get_suave_db_url(),
   pool_size: 1,
   ssl: ExplorerConfigHelper.ssl_enabled?()
+
+# Actually the following repos are not started, and its pool size remains
+# unused. Separating repos for different chain type or feature flag is
+# implemented only for the sake of keeping DB schema update relevant to the
+# current chain type
+for repo <- [
+      # Feature dependent repos
+      Explorer.Repo.BridgedTokens,
+      Explorer.Repo.ShrunkInternalTransactions,
+
+      # Chain-type dependent repos
+      Explorer.Repo.Arbitrum,
+      Explorer.Repo.Beacon,
+      Explorer.Repo.Blackfort,
+      Explorer.Repo.Celo,
+      Explorer.Repo.Filecoin,
+      Explorer.Repo.Optimism,
+      Explorer.Repo.PolygonEdge,
+      Explorer.Repo.PolygonZkevm,
+      Explorer.Repo.RSK,
+      Explorer.Repo.Scroll,
+      Explorer.Repo.Shibarium,
+      Explorer.Repo.Stability,
+      Explorer.Repo.Zilliqa,
+      Explorer.Repo.ZkSync
+    ] do
+  config :explorer, repo,
+    url: System.get_env("DATABASE_URL"),
+    pool_size: 1,
+    ssl: ExplorerConfigHelper.ssl_enabled?()
+end
 
 variant = Variant.get()
 

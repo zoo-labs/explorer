@@ -1,0 +1,37 @@
+version: '3.9'
+
+services:
+  visualizer:
+    extends:
+      file: ./services/visualizer.yml
+      service: visualizer
+    ports:
+      - 8050:8050
+
+  sig-provider:
+    extends:
+      file: ./services/sig-provider.yml
+      service: sig-provider
+    ports:
+      - 8051:8050
+
+  sc-verifier:
+    extends:
+      file: ./services/smart-contract-verifier.yml
+      service: smart-contract-verifier
+    ports:
+      - 8052:8050
+
+  stats:
+    extends:
+      file: ./services/stats.yml
+      service: stats
+    ports:
+      - 8053:8050
+
+  user-ops-indexer:
+    extends:
+      file: ./services/user-ops-indexer.yml
+      service: user-ops-indexer
+    ports:
+      - 8054:8050

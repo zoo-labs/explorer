@@ -7,7 +7,7 @@ defmodule BlockScout.Mixfile do
     [
       # app: :block_scout,
       # aliases: aliases(config_env()),
-      version: "5.3.3",
+      version: "6.9.0",
       apps_path: "apps",
       deps: deps(),
       dialyzer: dialyzer(),
@@ -52,8 +52,8 @@ defmodule BlockScout.Mixfile do
 
   defp dialyzer() do
     [
-      plt_add_deps: :transitive,
-      plt_add_apps: ~w(ex_unit mix)a,
+      plt_add_deps: :app_tree,
+      plt_add_apps: ~w(ex_unit mix wallaby)a,
       ignore_warnings: ".dialyzer-ignore",
       plt_core_path: "priv/plts",
       plt_file: {:no_warn, "priv/plts/dialyzer.plt"}
@@ -93,13 +93,11 @@ defmodule BlockScout.Mixfile do
   defp deps do
     [
       {:prometheus_ex, git: "https://github.com/lanodan/prometheus.ex", branch: "fix/elixir-1.14", override: true},
-      {:absinthe_plug, git: "https://github.com/blockscout/absinthe_plug.git", tag: "1.5.3", override: true},
-      {:tesla, "~> 1.8.0"},
+      {:absinthe_plug, git: "https://github.com/blockscout/absinthe_plug.git", tag: "1.5.8", override: true},
+      {:tesla, "~> 1.13.0"},
       # Documentation
-      {:ex_doc, "~> 0.31.0", only: :dev, runtime: false},
-      {:number, "~> 1.0.3"},
-      # Auth
-      {:ueberauth, "~> 0.10"}
+      {:ex_doc, "~> 0.34.1", only: :dev, runtime: false},
+      {:number, "~> 1.0.3"}
     ]
   end
 end

@@ -17,36 +17,58 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       delete_parameters_from_next_page_params: 1,
       token_transfers_types_options: 1,
       address_transactions_sorting: 1,
-      nft_token_types_options: 1
+      nft_types_options: 1
     ]
+
+  import Explorer.MicroserviceInterfaces.BENS, only: [maybe_preload_ens: 1, maybe_preload_ens_to_address: 1]
+  import Explorer.MicroserviceInterfaces.Metadata, only: [maybe_preload_metadata: 1]
 
   alias BlockScoutWeb.AccessHelper
   alias BlockScoutWeb.API.V2.{BlockView, TransactionView, WithdrawalView}
   alias Explorer.{Chain, Market}
-  alias Explorer.Chain.{Address, Transaction}
+  alias Explorer.Chain.{Address, Hash, Transaction}
   alias Explorer.Chain.Address.Counters
   alias Explorer.Chain.Token.Instance
-  alias Indexer.Fetcher.{CoinBalanceOnDemand, TokenBalanceOnDemand}
+  alias Explorer.SmartContract.Helper, as: SmartContractHelper
+
+  alias BlockScoutWeb.API.V2.CeloView
+  alias Explorer.Chain.Celo.ElectionReward, as: CeloElectionReward
+  alias Explorer.Chain.Celo.Reader, as: CeloReader
+
+  alias Indexer.Fetcher.OnDemand.CoinBalance, as: CoinBalanceOnDemand
+  alias Indexer.Fetcher.OnDemand.ContractCode, as: ContractCodeOnDemand
+  alias Indexer.Fetcher.OnDemand.TokenBalance, as: TokenBalanceOnDemand
+
+  case Application.compile_env(:explorer, :chain_type) do
+    :celo ->
+      @chain_type_transaction_necessity_by_association %{
+        :gas_token => :optional
+      }
+
+    _ ->
+      @chain_type_transaction_necessity_by_association %{}
+  end
 
   @transaction_necessity_by_association [
-    necessity_by_association: %{
-      [created_contract_address: :names] => :optional,
-      [from_address: :names] => :optional,
-      [to_address: :names] => :optional,
-      :block => :optional,
-      [created_contract_address: :smart_contract] => :optional,
-      [from_address: :smart_contract] => :optional,
-      [to_address: :smart_contract] => :optional
-    },
+    necessity_by_association:
+      %{
+        [created_contract_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] =>
+          :optional,
+        [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+        [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+        :block => :optional
+      }
+      |> Map.merge(@chain_type_transaction_necessity_by_association),
     api?: true
   ]
 
   @token_transfer_necessity_by_association [
     necessity_by_association: %{
-      :to_address => :optional,
-      :from_address => :optional,
+      [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+      [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
       :block => :optional,
-      :transaction => :optional
+      :transaction => :optional,
+      :token => :optional
     },
     api?: true
   ]
@@ -54,16 +76,28 @@ defmodule BlockScoutWeb.API.V2.AddressController do
   @address_options [
     necessity_by_association: %{
       :names => :optional,
-      :token => :optional
+      :scam_badge => :optional,
+      :token => :optional,
+      :signed_authorization => :optional
     },
     api?: true
   ]
 
-  @contract_address_preloads [
-    :smart_contract,
-    :contracts_creation_internal_transaction,
-    :contracts_creation_transaction
-  ]
+  case Application.compile_env(:explorer, :chain_type) do
+    :filecoin ->
+      @contract_address_preloads [
+        :smart_contract,
+        [contracts_creation_internal_transaction: :from_address],
+        [contracts_creation_transaction: :from_address]
+      ]
+
+    _ ->
+      @contract_address_preloads [
+        :smart_contract,
+        :contracts_creation_internal_transaction,
+        :contracts_creation_transaction
+      ]
+  end
 
   @nft_necessity_by_association [
     necessity_by_association: %{
@@ -73,17 +107,44 @@ defmodule BlockScoutWeb.API.V2.AddressController do
 
   @api_true [api?: true]
 
+  @celo_election_rewards_options [
+    necessity_by_association: %{
+      [
+        account_address: [
+          :names,
+          :smart_contract,
+          proxy_implementations_association()
+        ]
+      ] => :optional,
+      [
+        associated_account_address: [
+          :names,
+          :smart_contract,
+          proxy_implementations_association()
+        ]
+      ] => :optional
+    },
+    api?: true
+  ]
+
   action_fallback(BlockScoutWeb.API.V2.FallbackController)
 
   def address(conn, %{"address_hash_param" => address_hash_string} = params) do
-    with {:ok, _address_hash, address} <- validate_address(address_hash_string, params, @address_options),
-         fully_preloaded_address <-
-           Address.maybe_preload_smart_contract_associations(address, @contract_address_preloads, @api_true) do
-      CoinBalanceOnDemand.trigger_fetch(fully_preloaded_address)
+    with {:ok, _address_hash, address} <- validate_address(address_hash_string, params, @address_options) do
+      fully_preloaded_address =
+        Address.maybe_preload_smart_contract_associations(address, @contract_address_preloads, @api_true)
+
+      implementations = SmartContractHelper.pre_fetch_implementations(fully_preloaded_address)
+
+      CoinBalanceOnDemand.trigger_fetch(address)
+      ContractCodeOnDemand.trigger_fetch(address)
 
       conn
       |> put_status(200)
-      |> render(:address, %{address: fully_preloaded_address})
+      |> render(:address, %{
+        address:
+          %Address{fully_preloaded_address | proxy_implementations: implementations} |> maybe_preload_ens_to_address()
+      })
     end
   end
 
@@ -142,7 +203,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       conn
       |> put_status(200)
       |> put_view(TransactionView)
-      |> render(:transactions, %{transactions: transactions, next_page_params: next_page_params})
+      |> render(:transactions, %{
+        transactions: transactions |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
     end
   end
 
@@ -157,8 +221,8 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       options =
         [
           necessity_by_association: %{
-            :to_address => :optional,
-            :from_address => :optional,
+            [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+            [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
             :block => :optional,
             :token => :optional,
             :transaction => :optional
@@ -185,7 +249,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       conn
       |> put_status(200)
       |> put_view(TransactionView)
-      |> render(:token_transfers, %{token_transfers: token_transfers, next_page_params: next_page_params})
+      |> render(:token_transfers, %{
+        token_transfers: token_transfers |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
     end
   end
 
@@ -214,7 +281,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       conn
       |> put_status(200)
       |> put_view(TransactionView)
-      |> render(:token_transfers, %{token_transfers: token_transfers, next_page_params: next_page_params})
+      |> render(:token_transfers, %{
+        token_transfers: token_transfers |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
     end
   end
 
@@ -223,12 +293,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       full_options =
         [
           necessity_by_association: %{
-            [created_contract_address: :names] => :optional,
-            [from_address: :names] => :optional,
-            [to_address: :names] => :optional,
-            [created_contract_address: :smart_contract] => :optional,
-            [from_address: :smart_contract] => :optional,
-            [to_address: :smart_contract] => :optional
+            [created_contract_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] =>
+              :optional,
+            [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+            [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional
           }
         ]
         |> Keyword.merge(paging_options(params))
@@ -245,7 +313,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       |> put_status(200)
       |> put_view(TransactionView)
       |> render(:internal_transactions, %{
-        internal_transactions: internal_transactions,
+        internal_transactions: internal_transactions |> maybe_preload_ens() |> maybe_preload_metadata(),
         next_page_params: next_page_params
       })
     end
@@ -257,7 +325,16 @@ defmodule BlockScoutWeb.API.V2.AddressController do
 
       formatted_topic = if String.starts_with?(prepared_topic, "0x"), do: prepared_topic, else: "0x" <> prepared_topic
 
-      options = params |> paging_options() |> Keyword.merge(topic: formatted_topic) |> Keyword.merge(@api_true)
+      options =
+        params
+        |> paging_options()
+        |> Keyword.merge(topic: formatted_topic)
+        |> Keyword.merge(
+          necessity_by_association: %{
+            [address: [:names, :smart_contract, proxy_implementations_association()]] => :optional
+          }
+        )
+        |> Keyword.merge(@api_true)
 
       results_plus_one = Chain.address_to_logs(address_hash, false, options)
 
@@ -268,7 +345,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       conn
       |> put_status(200)
       |> put_view(TransactionView)
-      |> render(:logs, %{logs: logs, next_page_params: next_page_params})
+      |> render(:logs, %{
+        logs: logs |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
     end
   end
 
@@ -285,7 +365,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       conn
       |> put_status(200)
       |> put_view(TransactionView)
-      |> render(:logs, %{logs: logs, next_page_params: next_page_params})
+      |> render(:logs, %{
+        logs: logs |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
     end
   end
 
@@ -294,6 +377,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       full_options =
         [
           necessity_by_association: %{
+            [miner: proxy_implementations_association()] => :optional,
             miner: :required,
             nephews: :optional,
             transactions: :optional,
@@ -387,7 +471,10 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       conn
       |> put_status(200)
       |> put_view(WithdrawalView)
-      |> render(:withdrawals, %{withdrawals: withdrawals, next_page_params: next_page_params})
+      |> render(:withdrawals, %{
+        withdrawals: withdrawals |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
     end
   end
 
@@ -407,7 +494,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
     conn
     |> put_status(200)
     |> render(:addresses, %{
-      addresses: addresses,
+      addresses: addresses |> maybe_preload_ens() |> maybe_preload_metadata(),
       next_page_params: next_page_params,
       exchange_rate: exchange_rate,
       total_supply: total_supply
@@ -416,20 +503,45 @@ defmodule BlockScoutWeb.API.V2.AddressController do
 
   def tabs_counters(conn, %{"address_hash_param" => address_hash_string} = params) do
     with {:ok, address_hash, _address} <- validate_address(address_hash_string, params) do
-      {validations, transactions, token_transfers, token_balances, logs, withdrawals, internal_txs} =
-        Counters.address_limited_counters(address_hash, @api_true)
+      counter_name_to_json_field_name = %{
+        validations: :validations_count,
+        transactions: :transactions_count,
+        token_transfers: :token_transfers_count,
+        token_balances: :token_balances_count,
+        logs: :logs_count,
+        withdrawals: :withdrawals_count,
+        # todo: support of 2 props in API endpoint is for compatibility with the current version of frontend.
+        # It should be ultimately removed.
+        internal_transactions: [:internal_transactions_count, :internal_txs_count],
+        celo_election_rewards: :celo_election_rewards_count
+      }
+
+      counters_json =
+        address_hash
+        |> Counters.address_limited_counters(@api_true)
+        |> Enum.reduce(%{}, fn {counter_name, counter_value}, acc ->
+          counter_name_to_json_field_name
+          |> Map.fetch(counter_name)
+          |> case do
+            {:ok, json_field_name} ->
+              # todo: array-type value processing here is temporary. Please remove it with updating frontend to the new version.
+              if is_list(json_field_name) do
+                # credo:disable-for-next-line
+                Enum.reduce(json_field_name, acc, fn field_name, acc2 ->
+                  Map.put(acc2, field_name, counter_value)
+                end)
+              else
+                Map.put(acc, json_field_name, counter_value)
+              end
+
+            :error ->
+              acc
+          end
+        end)
 
       conn
       |> put_status(200)
-      |> json(%{
-        validations_count: validations,
-        transactions_count: transactions,
-        token_transfers_count: token_transfers,
-        token_balances_count: token_balances,
-        logs_count: logs,
-        withdrawals_count: withdrawals,
-        internal_txs_count: internal_txs
-      })
+      |> json(counters_json)
     end
   end
 
@@ -440,7 +552,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
           address_hash,
           params
           |> paging_options()
-          |> Keyword.merge(nft_token_types_options(params))
+          |> Keyword.merge(nft_types_options(params))
           |> Keyword.merge(@api_true)
           |> Keyword.merge(@nft_necessity_by_association)
         )
@@ -468,7 +580,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
           address_hash,
           params
           |> paging_options()
-          |> Keyword.merge(nft_token_types_options(params))
+          |> Keyword.merge(nft_types_options(params))
           |> Keyword.merge(@api_true)
           |> Keyword.merge(@nft_necessity_by_association)
         )
@@ -489,7 +601,47 @@ defmodule BlockScoutWeb.API.V2.AddressController do
     end
   end
 
-  defp validate_address(address_hash_string, params, options \\ @api_true) do
+  @doc """
+  Function to handle GET requests to `/api/v2/addresses/:address_hash_param/election-rewards` endpoint.
+  """
+  def celo_election_rewards(conn, %{"address_hash_param" => address_hash_string} = params) do
+    with {:ok, address_hash, _address} <- validate_address(address_hash_string, params) do
+      full_options =
+        @celo_election_rewards_options
+        |> Keyword.merge(CeloElectionReward.address_paging_options(params))
+
+      results_plus_one = CeloReader.address_hash_to_election_rewards(address_hash, full_options)
+
+      {rewards, next_page} = split_list_by_page(results_plus_one)
+
+      next_page_params =
+        next_page_params(
+          next_page,
+          rewards,
+          delete_parameters_from_next_page_params(params),
+          &CeloElectionReward.to_address_paging_params/1
+        )
+
+      conn
+      |> put_status(200)
+      |> put_view(CeloView)
+      |> render(:celo_election_rewards, %{
+        rewards: rewards,
+        next_page_params: next_page_params
+      })
+    end
+  end
+
+  @doc """
+    Checks if this valid address hash string, and this address is not prohibited address.
+    Returns the `{:ok, address_hash, address}` if address hash passed all the checks.
+  """
+  @spec validate_address(String.t(), any(), Keyword.t()) ::
+          {:format, :error}
+          | {:not_found, {:error, :not_found}}
+          | {:restricted_access, true}
+          | {:ok, Hash.t(), Address.t()}
+  def validate_address(address_hash_string, params, options \\ @api_true) do
     with {:format, {:ok, address_hash}} <- {:format, Chain.string_to_address_hash(address_hash_string)},
          {:ok, false} <- AccessHelper.restricted_access?(address_hash_string, params),
          {:not_found, {:ok, address}} <- {:not_found, Chain.hash_to_address(address_hash, options, false)} do

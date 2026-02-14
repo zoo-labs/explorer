@@ -25,6 +25,10 @@ defmodule EthereumJSONRPC.Encoder do
 
   def encode_function_call(function_selector, args), do: encode_function_call(function_selector, [args])
 
+  defp parse_args(args, {:array, type}) when is_list(args) do
+    Enum.map(args, fn arg -> parse_args(arg, type) end)
+  end
+
   defp parse_args(args, types) when is_list(args) do
     args
     |> Enum.zip(types)
@@ -97,7 +101,7 @@ defmodule EthereumJSONRPC.Encoder do
 
     decoded_data =
       result
-      |> String.slice(2..-1)
+      |> String.slice(2..-1//1)
       |> Base.decode16!(case: :lower)
       |> TypeDecoder.decode_raw(types_list)
       |> Enum.zip(types_list)
@@ -116,7 +120,7 @@ defmodule EthereumJSONRPC.Encoder do
   def unescape(data) do
     if String.starts_with?(data, "\\x") do
       charlist = String.to_charlist(data)
-      erlang_literal = '"#{charlist}"'
+      erlang_literal = ~c"\"#{charlist}\""
       {:ok, [{:string, _, unescaped_charlist}], _} = :erl_scan.string(erlang_literal)
       List.to_string(unescaped_charlist)
     else
